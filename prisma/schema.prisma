@@ -1,0 +1,1097 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────
+// CORE / MULTI-TENANT
+// ─────────────────────────────────────────────
+
+model Company {
+  id        String   @id @default(uuid())
+  name      String
+  plan      String   @default("starter")
+  createdAt DateTime @default(now())
+
+  users                 User[]
+  customers             Customer[]
+  projects              Project[]
+  leads                 Lead[]
+  employees             Employee[]
+  suppliers             Supplier[]
+  costCenters           CostCenter[]
+  bankAccounts          BankAccount[]
+  receivables           Receivable[]
+  payables              Payable[]
+  subcontractorContracts SubcontractorContract[]
+  workBudgets           WorkBudget[]
+  indexers              Indexer[]
+  purchaseRequisitions  PurchaseRequisition[]
+  quotationMaps         QuotationMap[]
+  materialFamilies      MaterialFamily[]
+  materials             Material[]
+  assemblies            Assembly[]
+  inventory             InventoryItem[]
+
+  @@map("companies")
+}
+
+model User {
+  id           String   @id @default(uuid())
+  companyId    String
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         String   @default("user")
+  createdAt    DateTime @default(now())
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@map("users")
+}
+
+model Customer {
+  id        String   @id @default(uuid())
+  companyId String
+  name      String
+  email     String?
+  phone     String?
+  address   String?
+  createdAt DateTime @default(now())
+
+  company     Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  projects    Project[]
+  receivables Receivable[]
+
+  @@map("customers")
+}
+
+// ─────────────────────────────────────────────
+// PROJECTS & CONSTRUCTION CORE
+// ─────────────────────────────────────────────
+
+model Project {
+  id            String    @id @default(uuid())
+  companyId     String
+  customerId    String?
+  managerId     String?
+  name          String
+  status        String    @default("active")
+  tradeType     String?
+  contractValue Decimal?  @db.Decimal(15, 2)
+  startDate     DateTime?
+  endDate       DateTime?
+  address       String?
+  notes         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  company      Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  customer     Customer? @relation(fields: [customerId], references: [id])
+  manager      Employee? @relation("projectManager", fields: [managerId], references: [id])
+
+  budgets                Budget[]
+  invoices               Invoice[]
+  tasks                  Task[]
+  rfis                   RFI[]
+  photos                 Photo[]
+  dailyLogs              DailyLog[]
+  changeOrders           ChangeOrder[]
+  timesheets             Timesheet[]
+  receivables            Receivable[]
+  payables               Payable[]
+  subcontractorContracts SubcontractorContract[]
+  workBudgets            WorkBudget[]
+  purchaseRequisitions   PurchaseRequisition[]
+  quotationMaps          QuotationMap[]
+  costCenters            CostCenter[]
+  purchaseOrders         PurchaseOrder[]
+
+  @@map("projects")
+}
+
+model Lead {
+  id          String   @id @default(uuid())
+  companyId   String
+  name        String
+  status      String   @default("new")
+  projectType String?
+  value       Decimal? @db.Decimal(15, 2)
+  source      String?
+  notes       String?
+  createdAt   DateTime @default(now())
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@map("leads")
+}
+
+// ─────────────────────────────────────────────
+// BUDGET & ESTIMATING
+// ─────────────────────────────────────────────
+
+// AACE estimate class: 1=detailed, 2=control, 3=preliminary, 4=conceptual, 5=stochastic
+model Budget {
+  id            String   @id @default(uuid())
+  projectId     String
+  name          String
+  status        String   @default("draft")
+  estimateClass Int?     // AACE 1–5: 1=detailed/definitive, 5=stochastic/order-of-magnitude
+  overheadPct   Decimal  @default(12) @db.Decimal(5, 2)
+  markupPct     Decimal  @default(18) @db.Decimal(5, 2)
+  totalDirect   Decimal  @default(0) @db.Decimal(15, 2)
+  totalOverhead Decimal  @default(0) @db.Decimal(15, 2)
+  totalSell     Decimal  @default(0) @db.Decimal(15, 2)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  project Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  items   BudgetItem[]
+
+  @@map("budgets")
+}
+
+model BudgetItem {
+  id          String   @id @default(uuid())
+  budgetId    String
+  description String
+  category    String?
+  unit        String?
+  qty         Decimal  @default(1) @db.Decimal(12, 4)
+  unitCost    Decimal  @default(0) @db.Decimal(15, 4)
+  sortOrder   Int      @default(0)
+  materialId  String?
+  assemblyId  String?
+
+  budget   Budget    @relation(fields: [budgetId], references: [id], onDelete: Cascade)
+  material Material? @relation(fields: [materialId], references: [id])
+  assembly Assembly? @relation(fields: [assemblyId], references: [id])
+
+  @@map("budget_items")
+}
+
+// ─────────────────────────────────────────────
+// INVOICES (Contas a Receber básico)
+// ─────────────────────────────────────────────
+
+model Invoice {
+  id         String    @id @default(uuid())
+  projectId  String
+  createdBy  String
+  number     String    @unique
+  status     String    @default("draft")
+  subtotal   Decimal   @db.Decimal(15, 2)
+  taxPct     Decimal   @default(0) @db.Decimal(5, 2)
+  taxAmount  Decimal   @default(0) @db.Decimal(15, 2)
+  total      Decimal   @db.Decimal(15, 2)
+  amountPaid Decimal   @default(0) @db.Decimal(15, 2)
+  dueDate    DateTime?
+  createdAt  DateTime  @default(now())
+
+  project  Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  items    InvoiceItem[]
+  payments Payment[]
+
+  @@map("invoices")
+}
+
+model InvoiceItem {
+  id          String  @id @default(uuid())
+  invoiceId   String
+  description String
+  unit        String?
+  qty         Decimal @default(1) @db.Decimal(12, 4)
+  unitPrice   Decimal @db.Decimal(15, 4)
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@map("invoice_items")
+}
+
+model Payment {
+  id        String   @id @default(uuid())
+  invoiceId String
+  amount    Decimal  @db.Decimal(15, 2)
+  paidAt    DateTime @default(now())
+  notes     String?
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@map("payments")
+}
+
+// ─────────────────────────────────────────────
+// HR / EMPLOYEES
+// ─────────────────────────────────────────────
+
+model Employee {
+  id         String    @id @default(uuid())
+  companyId  String
+  name       String
+  role       String?
+  hourlyRate Decimal?  @db.Decimal(10, 2)
+  status     String    @default("active")
+  createdAt  DateTime  @default(now())
+
+  company        Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  certifications Certification[]
+  timesheets     Timesheet[]
+  projectsManaged Project[]      @relation("projectManager")
+
+  @@map("employees")
+}
+
+model Certification {
+  id         String    @id @default(uuid())
+  employeeId String
+  name       String
+  issuedAt   DateTime?
+  expiryDate DateTime?
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@map("certifications")
+}
+
+model Timesheet {
+  id         String   @id @default(uuid())
+  employeeId String
+  projectId  String
+  logDate    DateTime
+  hours      Decimal  @db.Decimal(6, 2)
+  hourlyRate Decimal  @db.Decimal(10, 2)
+  notes      String?
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  project  Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@map("timesheets")
+}
+
+// ─────────────────────────────────────────────
+// SITE MANAGEMENT
+// ─────────────────────────────────────────────
+
+model Task {
+  id        String   @id @default(uuid())
+  projectId String
+  title     String
+  status    String   @default("todo")
+  sortOrder Int      @default(0)
+  dueDate   DateTime?
+  notes     String?
+  createdAt DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@map("tasks")
+}
+
+model RFI {
+  id        String   @id @default(uuid())
+  projectId String
+  number    String
+  subject   String
+  status    String   @default("open")
+  notes     String?
+  createdAt DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@map("rfis")
+}
+
+model Photo {
+  id        String   @id @default(uuid())
+  projectId String
+  url       String
+  caption   String?
+  createdAt DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@map("photos")
+}
+
+model DailyLog {
+  id             String   @id @default(uuid())
+  projectId      String
+  logDate        DateTime
+  weather        String?
+  workersOnsite  Int?
+  workPerformed  String?
+  materialsUsed  String?
+  issues         String?
+  notes          String?
+  createdAt      DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@map("daily_logs")
+}
+
+model ChangeOrder {
+  id          String   @id @default(uuid())
+  projectId   String
+  number      String
+  title       String
+  description String?
+  status      String   @default("draft")
+  amount      Decimal  @db.Decimal(15, 2)
+  createdAt   DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@map("change_orders")
+}
+
+// ─────────────────────────────────────────────
+// MATERIALS & ASSEMBLIES
+// ─────────────────────────────────────────────
+
+model MaterialFamily {
+  id           String  @id @default(uuid())
+  companyId    String
+  code         String?
+  name         String
+  tolerancePct Decimal @default(0) @db.Decimal(5, 2)
+
+  company   Company    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  materials Material[]
+
+  @@map("material_families")
+}
+
+model Material {
+  id          String  @id @default(uuid())
+  companyId   String
+  familyId    String?
+  code        String?
+  tcpoCode    String?
+  description String
+  unit        String?
+  // Fator de perda típico (%) — e.g. cimento 8-15%, cerâmica 10%, aço 5-10%, argamassa 20%
+  wastePct    Decimal @default(0) @db.Decimal(5, 2)
+  inactive    Boolean @default(false)
+
+  company      Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  family       MaterialFamily? @relation(fields: [familyId], references: [id])
+  budgetItems  BudgetItem[]
+  insumos      WorkBudgetInsumo[]
+  reqItems     PurchaseRequisitionItem[]
+  inventoryItems InventoryItem[]
+
+  @@map("materials")
+}
+
+model Assembly {
+  id          String   @id @default(uuid())
+  companyId   String
+  name        String
+  description String?
+  createdAt   DateTime @default(now())
+
+  company     Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  budgetItems BudgetItem[]
+
+  @@map("assemblies")
+}
+
+model InventoryItem {
+  id         String  @id @default(uuid())
+  companyId  String
+  materialId String?
+  name       String
+  unit       String?
+  qtyOnHand  Decimal @default(0) @db.Decimal(12, 4)
+  unitCost   Decimal @default(0) @db.Decimal(15, 4)
+
+  company  Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  material Material? @relation(fields: [materialId], references: [id])
+
+  @@map("inventory_items")
+}
+
+// ─────────────────────────────────────────────
+// SUPPLIERS
+// ─────────────────────────────────────────────
+
+model Supplier {
+  id            String  @id @default(uuid())
+  companyId     String
+  name          String
+  taxId         String?
+  email         String?
+  phone         String?
+  address       String?
+  supplierType  String?
+  issRate       Decimal? @db.Decimal(5, 2)
+  fpasCode      String?
+  irrfCode      String?
+  inssCode      String?
+  inactive      Boolean  @default(false)
+  createdAt     DateTime @default(now())
+
+  company                Company                 @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  purchaseOrders         PurchaseOrder[]
+  payables               Payable[]
+  subcontractorContracts SubcontractorContract[]
+  quotationItems         QuotationItem[]
+
+  @@map("suppliers")
+}
+
+// ─────────────────────────────────────────────
+// PROCUREMENT / COMPRAS (Toc150100)
+// ─────────────────────────────────────────────
+
+model PurchaseOrder {
+  id         String   @id @default(uuid())
+  projectId  String
+  supplierId String
+  createdBy  String
+  number     String   @unique
+  status     String   @default("draft")
+  total      Decimal  @db.Decimal(15, 2)
+  notes      String?
+  createdAt  DateTime @default(now())
+
+  project  Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  supplier Supplier           @relation(fields: [supplierId], references: [id])
+  items    PurchaseOrderItem[]
+
+  @@map("purchase_orders")
+}
+
+model PurchaseOrderItem {
+  id              String  @id @default(uuid())
+  purchaseOrderId String
+  description     String
+  materialId      String?
+  unit            String?
+  qty             Decimal @db.Decimal(12, 4)
+  unitPrice       Decimal @db.Decimal(15, 4)
+
+  purchaseOrder PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+
+  @@map("purchase_order_items")
+}
+
+model PurchaseRequisition {
+  id          String   @id @default(uuid())
+  companyId   String
+  projectId   String?
+  requesterId String
+  status      String   @default("draft")
+  notes       String?
+  createdAt   DateTime @default(now())
+
+  company  Company                   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  project  Project?                  @relation(fields: [projectId], references: [id])
+  items    PurchaseRequisitionItem[]
+
+  @@map("purchase_requisitions")
+}
+
+model PurchaseRequisitionItem {
+  id             String   @id @default(uuid())
+  requisitionId  String
+  materialId     String?
+  description    String
+  unit           String?
+  quantity       Decimal  @db.Decimal(12, 4)
+  estimatedPrice Decimal? @db.Decimal(15, 4)
+  notes          String?
+
+  requisition PurchaseRequisition @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+  material    Material?           @relation(fields: [materialId], references: [id])
+
+  @@map("purchase_requisition_items")
+}
+
+model QuotationMap {
+  id        String   @id @default(uuid())
+  companyId String
+  projectId String?
+  number    String
+  status    String   @default("draft")
+  notes     String?
+  createdAt DateTime @default(now())
+
+  company Company        @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  project Project?       @relation(fields: [projectId], references: [id])
+  items   QuotationItem[]
+
+  @@map("quotation_maps")
+}
+
+model QuotationItem {
+  id             String   @id @default(uuid())
+  quotationMapId String
+  supplierId     String
+  description    String
+  unit           String?
+  quantity       Decimal  @db.Decimal(12, 4)
+  unitPrice      Decimal? @db.Decimal(15, 4)
+  validity       DateTime?
+  notes          String?
+
+  quotationMap QuotationMap @relation(fields: [quotationMapId], references: [id], onDelete: Cascade)
+  supplier     Supplier     @relation(fields: [supplierId], references: [id])
+
+  @@map("quotation_items")
+}
+
+// ─────────────────────────────────────────────
+// COST CENTERS
+// ─────────────────────────────────────────────
+
+model CostCenter {
+  id          String  @id @default(uuid())
+  companyId   String
+  projectId   String?
+  code        String
+  description String
+  inactive    Boolean @default(false)
+
+  company  Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  project  Project? @relation(fields: [projectId], references: [id])
+  payables Payable[]
+
+  @@map("cost_centers")
+}
+
+// ─────────────────────────────────────────────
+// CONTROLE BANCÁRIO (Toc3000)
+// ─────────────────────────────────────────────
+
+model BankAccount {
+  id            String   @id @default(uuid())
+  companyId     String
+  bankName      String
+  bankCode      String?
+  agencyNumber  String?
+  accountNumber String
+  accountType   String   @default("checking")
+  balance       Decimal  @default(0) @db.Decimal(15, 2)
+  inactive      Boolean  @default(false)
+  createdAt     DateTime @default(now())
+
+  company          Company              @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  transactions     BankTransaction[]
+  reconciliations  BankReconciliation[]
+  checkBooks       CheckBook[]
+  receivablePayments ReceivablePayment[]
+  payablePayments    PayablePayment[]
+
+  @@map("bank_accounts")
+}
+
+model BankTransaction {
+  id            String   @id @default(uuid())
+  bankAccountId String
+  date          DateTime
+  description   String
+  amount        Decimal  @db.Decimal(15, 2)
+  type          String   // debit | credit
+  nature        String?  // natureza da transação
+  reference     String?
+  conciliated   Boolean  @default(false)
+  conciliatedAt DateTime?
+  notes         String?
+  createdAt     DateTime @default(now())
+
+  bankAccount BankAccount @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
+
+  @@map("bank_transactions")
+}
+
+model BankReconciliation {
+  id             String   @id @default(uuid())
+  bankAccountId  String
+  periodYear     Int
+  periodMonth    Int
+  statementBalance Decimal @db.Decimal(15, 2)
+  bookBalance    Decimal  @db.Decimal(15, 2)
+  difference     Decimal  @db.Decimal(15, 2)
+  reconciledAt   DateTime @default(now())
+  notes          String?
+
+  bankAccount BankAccount @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
+
+  @@map("bank_reconciliations")
+}
+
+model CheckBook {
+  id            String  @id @default(uuid())
+  bankAccountId String
+  series        String?
+  firstNumber   Int
+  lastNumber    Int
+  currentNumber Int
+
+  bankAccount BankAccount @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
+  checks      Check[]
+
+  @@map("check_books")
+}
+
+model Check {
+  id          String   @id @default(uuid())
+  checkBookId String
+  number      Int
+  status      String   @default("available") // available | issued | cleared | voided
+  issuedTo    String?
+  amount      Decimal? @db.Decimal(15, 2)
+  issuedAt    DateTime?
+  clearedAt   DateTime?
+
+  checkBook CheckBook @relation(fields: [checkBookId], references: [id], onDelete: Cascade)
+
+  @@map("checks")
+}
+
+// ─────────────────────────────────────────────
+// CONTAS A RECEBER — FULL (Toc22)
+// ─────────────────────────────────────────────
+
+model Receivable {
+  id              String    @id @default(uuid())
+  companyId       String
+  projectId       String?
+  customerId      String?
+  number          String
+  description     String?
+  issueDate       DateTime
+  dueDate         DateTime
+  amount          Decimal   @db.Decimal(15, 2)
+  amountPaid      Decimal   @default(0) @db.Decimal(15, 2)
+  status          String    @default("open") // open | partial | paid | overdue | renegotiated
+  // Tax withholdings
+  retentionINSS   Decimal   @default(0) @db.Decimal(15, 2)
+  retentionISS    Decimal   @default(0) @db.Decimal(15, 2)
+  retentionIR     Decimal   @default(0) @db.Decimal(15, 2)
+  retentionPIS    Decimal   @default(0) @db.Decimal(15, 2)
+  retentionCOFINS Decimal   @default(0) @db.Decimal(15, 2)
+  retentionCSLL   Decimal   @default(0) @db.Decimal(15, 2)
+  // NF-e / NFS-e
+  nfeNumber       String?
+  nfeSeries       String?
+  nfeDate         DateTime?
+  nfeType         String?   // product | service
+  cfop            String?
+  // Bank billing
+  boletoNumber    String?
+  bankBillingId   String?
+  notes           String?
+  createdAt       DateTime  @default(now())
+
+  company  Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  project  Project?  @relation(fields: [projectId], references: [id])
+  customer Customer? @relation(fields: [customerId], references: [id])
+  payments ReceivablePayment[]
+
+  @@map("receivables")
+}
+
+model ReceivablePayment {
+  id            String   @id @default(uuid())
+  receivableId  String
+  bankAccountId String?
+  amount        Decimal  @db.Decimal(15, 2)
+  paidAt        DateTime
+  paymentType   String?
+  notes         String?
+
+  receivable  Receivable   @relation(fields: [receivableId], references: [id], onDelete: Cascade)
+  bankAccount BankAccount? @relation(fields: [bankAccountId], references: [id])
+
+  @@map("receivable_payments")
+}
+
+// ─────────────────────────────────────────────
+// CONTAS A PAGAR — FULL (Toc1700)
+// ─────────────────────────────────────────────
+
+model Payable {
+  id              String    @id @default(uuid())
+  companyId       String
+  projectId       String?
+  supplierId      String?
+  costCenterId    String?
+  number          String
+  docType         String?   // NF | RPS | RMD | boleto | outros
+  description     String?
+  issueDate       DateTime
+  dueDate         DateTime
+  entryDate       DateTime  @default(now())
+  amount          Decimal   @db.Decimal(15, 2)
+  amountPaid      Decimal   @default(0) @db.Decimal(15, 2)
+  status          String    @default("pending") // pending | approved | released | paid | cancelled
+  // Tax withholdings
+  retentionINSS   Decimal   @default(0) @db.Decimal(15, 2)
+  retentionISS    Decimal   @default(0) @db.Decimal(15, 2)
+  retentionIRRF   Decimal   @default(0) @db.Decimal(15, 2)
+  retentionPIS    Decimal   @default(0) @db.Decimal(15, 2)
+  retentionCOFINS Decimal   @default(0) @db.Decimal(15, 2)
+  retentionCSLL   Decimal   @default(0) @db.Decimal(15, 2)
+  retentionCaution Decimal  @default(0) @db.Decimal(15, 2)
+  // NF data
+  nfeNumber       String?
+  nfeSeries       String?
+  nfeDate         DateTime?
+  // Classification
+  serviceCode     String?
+  cfop            String?
+  reference       String?
+  notes           String?
+  approvedBy      String?
+  approvedAt      DateTime?
+  createdAt       DateTime  @default(now())
+
+  company     Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  project     Project?    @relation(fields: [projectId], references: [id])
+  supplier    Supplier?   @relation(fields: [supplierId], references: [id])
+  costCenter  CostCenter? @relation(fields: [costCenterId], references: [id])
+  payments    PayablePayment[]
+  items       PayableItem[]
+
+  @@map("payables")
+}
+
+model PayableItem {
+  id          String   @id @default(uuid())
+  payableId   String
+  description String
+  serviceCode String?
+  amount      Decimal  @db.Decimal(15, 2)
+  notes       String?
+
+  payable Payable @relation(fields: [payableId], references: [id], onDelete: Cascade)
+
+  @@map("payable_items")
+}
+
+model PayablePayment {
+  id            String   @id @default(uuid())
+  payableId     String
+  bankAccountId String?
+  amount        Decimal  @db.Decimal(15, 2)
+  paidAt        DateTime
+  paymentType   String?  // transfer | check | boleto | pix | cash
+  notes         String?
+
+  payable     Payable      @relation(fields: [payableId], references: [id], onDelete: Cascade)
+  bankAccount BankAccount? @relation(fields: [bankAccountId], references: [id])
+
+  @@map("payable_payments")
+}
+
+// ─────────────────────────────────────────────
+// CONTRATOS COM SUB-EMPREITEIROS (Toc119)
+// ─────────────────────────────────────────────
+
+model SubcontractorContract {
+  id              String    @id @default(uuid())
+  companyId       String
+  projectId       String
+  supplierId      String
+  contractType    String?
+  description     String
+  startDate       DateTime?
+  endDate         DateTime?
+  totalValue      Decimal   @db.Decimal(15, 2)
+  executedValue   Decimal   @default(0) @db.Decimal(15, 2)
+  status          String    @default("draft") // draft | approved | released | closed
+  // Retentions (%)
+  retentionINSS   Decimal   @default(0) @db.Decimal(5, 2)
+  retentionISS    Decimal   @default(0) @db.Decimal(5, 2)
+  retentionIRRF   Decimal   @default(0) @db.Decimal(5, 2)
+  retentionCaution Decimal  @default(0) @db.Decimal(5, 2)
+  retentionCSLL   Decimal   @default(0) @db.Decimal(5, 2)
+  retentionPIS    Decimal   @default(0) @db.Decimal(5, 2)
+  // Payment
+  paymentDays     Int       @default(30)
+  paymentCondition String?
+  // Index / monetary correction
+  indexerId       String?
+  correctionMO    Decimal   @default(0) @db.Decimal(5, 2)
+  correctionMat   Decimal   @default(0) @db.Decimal(5, 2)
+  correctionStart DateTime?
+  // Advance (adiantamento)
+  advanceType     String?   // value | service
+  advanceAmount   Decimal   @default(0) @db.Decimal(15, 2)
+  // Other
+  legalContractNumber String?
+  closedAt        DateTime?
+  closedBy        String?
+  approvedBy      String?
+  approvedAt      DateTime?
+  releasedBy      String?
+  releasedAt      DateTime?
+  notes           String?
+  createdAt       DateTime  @default(now())
+
+  company     Company    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  project     Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  supplier    Supplier   @relation(fields: [supplierId], references: [id])
+  indexer     Indexer?   @relation(fields: [indexerId], references: [id])
+  services    ContractService[]
+  measurements ContractMeasurement[]
+
+  @@map("subcontractor_contracts")
+}
+
+model ContractService {
+  id            String   @id @default(uuid())
+  contractId    String
+  itemNumber    String?
+  description   String
+  unit          String?
+  quantity      Decimal  @db.Decimal(12, 4)
+  unitPrice     Decimal  @db.Decimal(15, 4)
+  totalPrice    Decimal  @db.Decimal(15, 2)
+  executed      Decimal  @default(0) @db.Decimal(12, 4)
+  serviceType   String   @default("unit") // unit | lumpsum
+  budgetServiceId String?
+  inactive      Boolean  @default(false)
+
+  contract     SubcontractorContract    @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  measurementItems ContractMeasurementItem[]
+
+  @@map("contract_services")
+}
+
+model ContractMeasurement {
+  id              String    @id @default(uuid())
+  contractId      String
+  measurementDate DateTime
+  measurementNumber Int
+  status          String    @default("draft") // draft | approved | processed
+  totalValue      Decimal   @db.Decimal(15, 2)
+  netValue        Decimal   @default(0) @db.Decimal(15, 2)
+  // NF data
+  nfNumber        String?
+  nfSeries        String?
+  nfDate          DateTime?
+  docType         String?
+  // Withholdings applied
+  appliedINSS     Decimal   @default(0) @db.Decimal(15, 2)
+  appliedISS      Decimal   @default(0) @db.Decimal(15, 2)
+  appliedIRRF     Decimal   @default(0) @db.Decimal(15, 2)
+  appliedCaution  Decimal   @default(0) @db.Decimal(15, 2)
+  appliedCSLL     Decimal   @default(0) @db.Decimal(15, 2)
+  appliedPIS      Decimal   @default(0) @db.Decimal(15, 2)
+  // Deduction
+  deductionAmount Decimal   @default(0) @db.Decimal(15, 2)
+  advanceAmount   Decimal   @default(0) @db.Decimal(15, 2)
+  // Processing
+  payableId       String?
+  processedAt     DateTime?
+  approvedBy      String?
+  approvedAt      DateTime?
+  notes           String?
+  createdAt       DateTime  @default(now())
+
+  contract SubcontractorContract    @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  items    ContractMeasurementItem[]
+
+  @@map("contract_measurements")
+}
+
+model ContractMeasurementItem {
+  id            String  @id @default(uuid())
+  measurementId String
+  serviceId     String
+  quantity      Decimal @db.Decimal(12, 4)
+  unitPrice     Decimal @db.Decimal(15, 4)
+  totalValue    Decimal @db.Decimal(15, 2)
+  notes         String?
+
+  measurement ContractMeasurement @relation(fields: [measurementId], references: [id], onDelete: Cascade)
+  service     ContractService     @relation(fields: [serviceId], references: [id])
+
+  @@map("contract_measurement_items")
+}
+
+// ─────────────────────────────────────────────
+// INDEXADORES (compartilhado entre módulos)
+// ─────────────────────────────────────────────
+
+model Indexer {
+  id        String  @id @default(uuid())
+  companyId String
+  name      String
+  lag       Int     @default(0) // defasagem em meses (0, 1, 2)
+  inactive  Boolean @default(false)
+
+  company               Company               @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  rates                 IndexerRate[]
+  subcontractorContracts SubcontractorContract[]
+  workBudgets           WorkBudget[]
+
+  @@map("indexers")
+}
+
+model IndexerRate {
+  id        String  @id @default(uuid())
+  indexerId String
+  year      Int
+  month     Int
+  rate      Decimal @db.Decimal(10, 6)
+
+  indexer Indexer @relation(fields: [indexerId], references: [id], onDelete: Cascade)
+
+  @@unique([indexerId, year, month])
+  @@map("indexer_rates")
+}
+
+// ─────────────────────────────────────────────
+// ACOMPANHAMENTO DE OBRAS / CASH FLOW (Toc642)
+// ─────────────────────────────────────────────
+
+model WorkBudget {
+  id          String    @id @default(uuid())
+  companyId   String
+  projectId   String
+  description String
+  baseDate    DateTime?
+  startDate   DateTime?
+  // BDI — global rate and TCU component breakdown
+  bdiPct      Decimal   @default(0) @db.Decimal(5, 2)
+  bdiAC       Decimal   @default(0) @db.Decimal(5, 2) // administração central (%)
+  bdiS        Decimal   @default(0) @db.Decimal(5, 2) // seguro (%)
+  bdiR        Decimal   @default(0) @db.Decimal(5, 2) // risco (%)
+  bdiG        Decimal   @default(0) @db.Decimal(5, 2) // garantia (%)
+  bdiDF       Decimal   @default(0) @db.Decimal(5, 2) // despesas financeiras (%)
+  bdiL        Decimal   @default(0) @db.Decimal(5, 2) // lucro (%)
+  // Indexer / monetary correction
+  indexerId   String?
+  indexerType String?   // INCC | IPCA | IGP-M | SINAPI
+  lagMonths   Int       @default(0)
+  // Cash flow — payment lag (defasagem de recebimento)
+  paymentLagDays Int    @default(30)
+  status      String    @default("draft") // draft | active | closed
+  totalValue  Decimal   @default(0) @db.Decimal(15, 2)
+  isPrimary   Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  company    Company        @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  project    Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  indexer    Indexer?       @relation(fields: [indexerId], references: [id])
+  services   WorkBudgetService[]
+  cashFlow   CashFlowPeriod[]
+
+  @@map("work_budgets")
+}
+
+model WorkBudgetService {
+  id            String  @id @default(uuid())
+  workBudgetId  String
+  serviceCode   String
+  description   String
+  unit          String?
+  quantity      Decimal @db.Decimal(12, 4)
+  unitPrice     Decimal @db.Decimal(15, 4)
+  totalPrice    Decimal @db.Decimal(15, 2)
+  bdiPct        Decimal @default(0) @db.Decimal(5, 2)
+  isLumpSum     Boolean @default(false)
+  sortOrder     Int     @default(0)
+  parentCode    String? // para hierarquia
+  // Earthwork: 1=solo/brita (trator), 2=rocha decomposta (ripping), 3=rocha sã (explosivo)
+  soilCategory  Int?
+
+  workBudget WorkBudget         @relation(fields: [workBudgetId], references: [id], onDelete: Cascade)
+  insumos    WorkBudgetInsumo[]
+
+  @@map("work_budget_services")
+}
+
+model WorkBudgetInsumo {
+  id                  String  @id @default(uuid())
+  workBudgetServiceId String
+  workBudgetId        String
+  materialId          String?
+  description         String
+  unit                String?
+  quantity            Decimal @db.Decimal(12, 4)
+  unitPrice           Decimal @db.Decimal(15, 4)
+  wastePct            Decimal @default(0) @db.Decimal(5, 2) // fator de perda (%)
+  deliveryDays        Int?
+
+  service  WorkBudgetService @relation(fields: [workBudgetServiceId], references: [id], onDelete: Cascade)
+  material Material?         @relation(fields: [materialId], references: [id])
+
+  @@map("work_budget_insumos")
+}
+
+model CashFlowPeriod {
+  id              String   @id @default(uuid())
+  workBudgetId    String
+  year            Int
+  month           Int
+  // Linha Base
+  basePct         Decimal  @default(0) @db.Decimal(6, 4)
+  baseValue       Decimal  @default(0) @db.Decimal(15, 2)
+  // Reprogramação
+  reprogrammedPct   Decimal  @default(0) @db.Decimal(6, 4)
+  reprogrammedValue Decimal  @default(0) @db.Decimal(15, 2)
+  // Realizado
+  executedPct     Decimal  @default(0) @db.Decimal(6, 4)
+  executedValue   Decimal  @default(0) @db.Decimal(15, 2)
+  // Comprometido (contratos + pedidos)
+  committedContracts  Decimal @default(0) @db.Decimal(15, 2)
+  committedOrders     Decimal @default(0) @db.Decimal(15, 2)
+  // Pago
+  paidValue       Decimal  @default(0) @db.Decimal(15, 2)
+  // Recebido (defasagem de recebimento — construtora financia a obra)
+  receivedValue   Decimal  @default(0) @db.Decimal(15, 2)
+
+  workBudget WorkBudget @relation(fields: [workBudgetId], references: [id], onDelete: Cascade)
+
+  @@unique([workBudgetId, year, month])
+  @@map("cash_flow_periods")
+}
+
+// ─────────────────────────────────────────────
+// RS MEANS COST LIBRARY (MasterFormat CSI)
+// ─────────────────────────────────────────────
+
+model CostDivision {
+  id          String  @id @default(uuid())
+  code        String  @unique // "03", "09", etc.
+  name        String           // "Concrete", "Finishes", etc.
+  description String?
+
+  items CostItem[]
+
+  @@map("cost_divisions")
+}
+
+model CostItem {
+  id           String  @id @default(uuid())
+  divisionId   String
+  lineNumber   String  @unique // "03 30 53.40 0010"
+  description  String
+  unit         String          // SF, CY, LF, EA, SY, etc.
+  materialCost Decimal @db.Decimal(12, 4)
+  laborCost    Decimal @db.Decimal(12, 4)
+  equipmentCost Decimal @default(0) @db.Decimal(12, 4)
+  totalCost    Decimal @db.Decimal(12, 4)
+  crewCode     String?         // "C-14A", "1 Carp", etc.
+  dailyOutput  Decimal? @db.Decimal(10, 2)
+  laborHours   Decimal? @db.Decimal(8, 4) // man-hours per unit
+  source       String  @default("RSMeans 2024")
+  notes        String?
+
+  division CostDivision @relation(fields: [divisionId], references: [id])
+
+  @@index([divisionId])
+  @@index([description])
+  @@map("cost_items")
+}
